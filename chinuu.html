@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aurora</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020818; overflow: hidden; width: 100vw; height: 100vh; cursor: none; }
+  #bgCanvas { position: fixed; top: 0; left: 0; z-index: 1; }
+  #heartCanvas { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
+  #hint { position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%); color: rgba(180,230,210,0.45); font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; pointer-events: none; transition: opacity 1.5s ease; z-index: 20; }
+  #cursor { position: fixed; width: 12px; height: 12px; border-radius: 50%; background: rgba(160,255,200,0.9); box-shadow: 0 0 18px 6px rgba(100,255,180,0.5); pointer-events: none; transform: translate(-50%,-50%); z-index: 999; }
+  #bday-text {
+    position: fixed;
+    top: 22%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 15;
+    pointer-events: none;
+    text-align: center;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    white-space: nowrap;
+    font-family: Georgia, serif;
+    font-size: clamp(22px, 4.5vw, 46px);
+    font-weight: bold;
+    letter-spacing: 0.04em;
+    background: linear-gradient(135deg, #fff 10%, #ffb3cc 40%, #ff4d80 70%, #ff8fab 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 0 18px rgba(255,80,140,0.7)) drop-shadow(0 2px 8px rgba(0,0,0,0.4));
+  }
+  #bday-emoji {
+    -webkit-text-fill-color: initial;
+    background: none;
+    -webkit-background-clip: unset;
+    background-clip: unset;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));
+  }
+</style>
+</head>
+<body>
+<canvas id="bgCanvas"></canvas>
+<canvas id="heartCanvas" width="360" height="360"></canvas>
+<div id="bday-text"><span id="bday-words">Happy birthday chinuu</span><span id="bday-emoji">🥳😁</span></div>
+<div id="hint">Swipe up · Click to burst</div>
+<div id="cursor"></div>
+<script>
+// ── BG Aurora ────────────────────────────────────────────
+const canvas = document.getElementById('bgCanvas');
+const ctx = canvas.getContext('2d');
+const cursor = document.getElementById('cursor');
+const hint = document.getElementById('hint');
+const bdayText = document.getElementById('bday-text');
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+let mouse = { x: W/2, y: H/2 };
+let particles = [], auroras = [];
+let swipeOffset = 0, swipeTarget = 0;
+let touchStartY = null, mouseStartY = null, isDragging = false;
+const MAX_SWIPE = H * 0.85;
+let solidness = 0;
+
+class Aurora {
+  constructor(i) {
+    this.phase = Math.random()*Math.PI*2; this.speed = 0.00008+Math.random()*0.00012;
+    this.baseY = H*(0.15+Math.random()*0.45); this.amp = 60+Math.random()*120;
+    this.width = 90+Math.random()*160; this.hue = 140+Math.random()*80;
+    this.alpha = 0.03+Math.random()*0.05; this.waveFreq = 0.5+Math.random()*1.2;
+  }
+  draw(t) {
+    ctx.save();
+    const steps=180, dx=W/steps;
+    for(let i=0;i<steps;i++){
+      const x=i*dx;
+      const cy=this.baseY+Math.sin(x*0.003*this.waveFreq+t*this.speed*1000+this.phase)*this.amp+Math.sin(x*0.007+t*this.speed*700+this.phase*1.3)*(this.amp*0.4);
+      const g=ctx.createLinearGradient(x,cy-this.width,x,cy+this.width);
+      g.addColorStop(0,`hsla(${this.hue},90%,65%,0)`);
+      g.addColorStop(0.4,`hsla(${this.hue+20},85%,70%,${this.alpha})`);
+      g.addColorStop(0.5,`hsla(${this.hue},95%,75%,${this.alpha*1.8})`);
+      g.addColorStop(0.6,`hsla(${this.hue-20},85%,65%,${this.alpha})`);
+      g.addColorStop(1,`hsla(${this.hue},80%,55%,0)`);
+      ctx.fillStyle=g; ctx.fillRect(x,cy-this.width,dx+1,this.width*2);
+    }
+    ctx.restore();
+  }
+}
+class Particle {
+  constructor(x,y){
+    this.x=x;this.y=y;const a=Math.random()*Math.PI*2,s=2+Math.random()*6;
+    this.vx=Math.cos(a)*s;this.vy=Math.sin(a)*s;this.life=1;
+    this.decay=0.012+Math.random()*0.018;this.r=2+Math.random()*4;this.hue=330+Math.random()*40;
+  }
+  update(){this.x+=this.vx;this.y+=this.vy;this.vy+=0.04;this.life-=this.decay;this.vx*=0.98;}
+  draw(){
+    ctx.save();ctx.globalAlpha=Math.max(0,this.life);ctx.beginPath();
+    ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
+    ctx.fillStyle=`hsl(${this.hue},90%,75%)`;ctx.shadowColor=`hsl(${this.hue},100%,80%)`;ctx.shadowBlur=8;ctx.fill();ctx.restore();
+  }
+}
+const stars=Array.from({length:220},()=>({x:Math.random()*W,y:Math.random()*H*0.8,r:Math.random()*1.2,twinkle:Math.random()*Math.PI*2,speed:0.005+Math.random()*0.02}));
+for(let i=0;i<7;i++) auroras.push(new Aurora(i));
+
+function loopBg(ts){
+  swipeOffset+=(swipeTarget-swipeOffset)*0.08;
+  solidness=Math.min(1,swipeOffset/(MAX_SWIPE*0.7));
+  bdayText.style.opacity = Math.min(1, Math.max(0, (solidness - 0.3) / 0.5));
+  // Blend from dark aurora bg to clean light pink
+  const bgR = Math.round(2 + solidness * 253);
+  const bgG = Math.round(8 + solidness * 217);
+  const bgB = Math.round(24 + solidness * 207);
+  ctx.fillStyle=`rgb(${bgR},${bgG},${bgB})`;
+  ctx.fillRect(0,0,W,H);
+
+  // Aurora & stars only visible when NOT swiped
+  const auroraAlpha = 1 - solidness;
+  if(auroraAlpha > 0.01){
+    ctx.save();ctx.globalAlpha=auroraAlpha;
+    stars.forEach(s=>{
+      const a=0.3+0.5*Math.abs(Math.sin(s.twinkle+ts*s.speed));
+      ctx.beginPath();ctx.arc(s.x,s.y-swipeOffset,s.r,0,Math.PI*2);
+      ctx.fillStyle=`rgba(220,240,255,${a})`;ctx.fill();
+    });
+    ctx.restore();
+    ctx.save();ctx.globalAlpha=auroraAlpha;ctx.globalCompositeOperation='screen';
+    auroras.forEach((a,i)=>{
+      a.baseY=H*(0.15+(i/auroras.length)*0.4)+Math.sin(ts*0.00005+a.phase)*30+(mouse.y/H-0.5)*60-swipeOffset;
+      a.draw(ts);
+    });
+    ctx.restore();
+
+  }
+
+  // Soft pink vignette on swiped page
+  if(solidness > 0){
+    const vign = ctx.createRadialGradient(W/2,H/2,H*0.2,W/2,H/2,H*0.85);
+    vign.addColorStop(0,'rgba(255,182,210,0)');
+    vign.addColorStop(1,`rgba(255,150,190,${solidness*0.18})`);
+    ctx.fillStyle=vign;
+    ctx.fillRect(0,0,W,H);
+  }
+  particles=particles.filter(p=>p.life>0);
+  ctx.save();ctx.globalCompositeOperation='screen';
+  particles.forEach(p=>{p.update();p.draw();});ctx.restore();
+  requestAnimationFrame(loopBg);
+}
+
+// ── 3D Heart — fully solid, no hollow ───────────────────
+const hc = document.getElementById('heartCanvas');
+const hx = hc.getContext('2d');
+const HC=360, HH=360;
+
+// Strategy: render SLICES of the heart along the Z axis.
+// Each slice is a 2D filled heart shape at depth z.
+// This guarantees NO hollow — every z layer is fully filled.
+
+// 2D heart outline at a given z slice
+// From parametric: x=16sin³u, y=13cosu-5cos2u-2cos3u-cos4u, z_extent=4sin²u
+// At given z, valid u range where |z| <= 4sin²u
+// We'll just draw filled 2D heart shapes scaled by z-depth
+
+function heartPath2D(ctx2d, cx, cy, scale, scaleZ){
+  // Draw filled 2D heart scaled by scaleZ (side profile squish)
+  const steps = 200;
+  ctx2d.beginPath();
+  for(let i=0;i<=steps;i++){
+    const u = (i/steps)*Math.PI*2;
+    const sinU = Math.sin(u);
+    const px = 16*sinU*sinU*sinU;
+    const py = 13*Math.cos(u)-5*Math.cos(2*u)-2*Math.cos(3*u)-Math.cos(4*u);
+    const sx = cx + px*scale;
+    const sy = cy - py*scale;
+    if(i===0) ctx2d.moveTo(sx,sy); else ctx2d.lineTo(sx,sy);
+  }
+  ctx2d.closePath();
+}
+
+// Helper: rotate a 3D point
+function rotPt(x,y,z,rotY,rotX){
+  // Y rotation
+  const cy=Math.cos(rotY),sy=Math.sin(rotY);
+  let rx=x*cy-z*sy, rz=x*sy+z*cy, ry=y;
+  // X rotation
+  const cx2=Math.cos(rotX),sx2=Math.sin(rotX);
+  let ry2=ry*cx2-rz*sx2, rz2=ry*sx2+rz*cx2;
+  return{x:rx,y:ry2,z:rz2};
+}
+
+// Precompute heart silhouette points at z=0 for a given rotation
+// We'll use a different approach: render many Z-slices as projected ellipses/outlines
+
+// Actually the cleanest approach: build full mesh with BOTH outer AND inner cap faces
+// so the heart is fully sealed. Use uSteps x vSteps where v goes -1 to 1 covering full surface.
+
+const uSteps=80, vSteps=40;
+const verts=[];
+for(let ui=0;ui<=uSteps;ui++){
+  for(let vi=0;vi<=vSteps;vi++){
+    const u=(ui/uSteps)*Math.PI*2;
+    const v=(vi/vSteps)*2-1;
+    const sinU=Math.sin(u);
+    const x=16*sinU*sinU*sinU;
+    const y=13*Math.cos(u)-5*Math.cos(2*u)-2*Math.cos(3*u)-Math.cos(4*u);
+    const z=v*4*sinU*sinU;
+    verts.push({x,y,z});
+  }
+}
+
+// Add front cap (v=+1, z_max per u) and back cap (v=-1) as disc faces
+// These seal the front and back openings
+const capFront=[], capBack=[];
+for(let ui=0;ui<=uSteps;ui++){
+  const u=(ui/uSteps)*Math.PI*2;
+  const sinU=Math.sin(u);
+  const x=16*sinU*sinU*sinU;
+  const y=13*Math.cos(u)-5*Math.cos(2*u)-2*Math.cos(3*u)-Math.cos(4*u);
+  const zMax=4*sinU*sinU;
+  capFront.push({x,y,z:zMax});
+  capBack.push({x,y,z:-zMax});
+}
+
+// Build triangle faces for shell
+const faces=[];
+for(let ui=0;ui<uSteps;ui++){
+  for(let vi=0;vi<vSteps;vi++){
+    const i00=ui*(vSteps+1)+vi;
+    const i10=(ui+1)*(vSteps+1)+vi;
+    const i01=ui*(vSteps+1)+vi+1;
+    const i11=(ui+1)*(vSteps+1)+vi+1;
+    faces.push([i00,i10,i11,'shell']);
+    faces.push([i00,i11,i01,'shell']);
+  }
+}
+
+// Cap triangles: fan from centroid of front/back
+const frontCX=verts.slice(0,uSteps+1).reduce((s,v)=>s+v.x,0)/(uSteps+1);
+const frontCY=verts.slice(0,uSteps+1).reduce((s,v)=>s+v.y,0)/(uSteps+1);
+const frontCentroid={x:frontCX,y:frontCY,z:5};  // slightly in front
+const backCentroid={x:frontCX,y:frontCY,z:-5};
+
+// Add cap verts
+const frontCapStart=verts.length;
+verts.push(frontCentroid);
+const backCapStart=verts.length;
+verts.push(backCentroid);
+
+// Cap edge verts (v=+1 for front, v=-1 for back)
+const frontEdgeStart=verts.length;
+for(let ui=0;ui<=uSteps;ui++){
+  verts.push(capFront[ui]);
+}
+const backEdgeStart=verts.length;
+for(let ui=0;ui<=uSteps;ui++){
+  verts.push(capBack[ui]);
+}
+
+// Cap face triangles
+for(let ui=0;ui<uSteps;ui++){
+  faces.push([frontCapStart, frontEdgeStart+ui, frontEdgeStart+ui+1,'front']);
+  faces.push([backCapStart, backEdgeStart+ui+1, backEdgeStart+ui,'back']);
+}
+
+function vecSub(a,b){return{x:a.x-b.x,y:a.y-b.y,z:a.z-b.z};}
+function cross(a,b){return{x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x};}
+function dot(a,b){return a.x*b.x+a.y*b.y+a.z*b.z;}
+function len(v){return Math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z);}
+function norm(v){const l=len(v)||1;return{x:v.x/l,y:v.y/l,z:v.z/l};}
+
+const lightDir=norm({x:-0.5,y:0.9,z:1.3});
+const rimLight=norm({x:0.8,y:-0.3,z:-0.6});
+
+function loopHeart(ts){
+  hx.clearRect(0,0,HC,HH);
+  const cx=HC/2, cy=HH/2+8;
+  const rotY=ts*0.0007;
+  const rotX=Math.sin(ts*0.0003)*0.28;
+  const floatY=Math.sin(ts*0.0009)*10;
+  const scale=9;
+  const s=solidness;
+
+  // Glow
+  const gl=hx.createRadialGradient(cx,cy+floatY,0,cx,cy+floatY,115);
+  gl.addColorStop(0,`rgba(255,50,110,${0.06+s*0.3})`);
+  gl.addColorStop(0.6,`rgba(220,20,60,${0.03+s*0.08})`);
+  gl.addColorStop(1,'rgba(200,0,50,0)');
+  hx.fillStyle=gl;hx.beginPath();hx.arc(cx,cy+floatY,115,0,Math.PI*2);hx.fill();
+
+  // Project all verts
+  const fov=220;
+  const proj=verts.map(p=>{
+    const r=rotPt(p.x,p.y,p.z,rotY,rotX);
+    const fy=r.y-floatY/scale;
+    const d=fov/(fov+r.z+35);
+    return{sx:cx+r.x*scale*d, sy:cy-fy*scale*d, z:r.z, rx:r.x,ry:r.y,rz:r.z};
+  });
+
+  if(s<0.03){
+    // Point cloud — no face compute needed
+    const ptProj=[...proj.slice(0,(uSteps+1)*(vSteps+1))].sort((a,b)=>a.z-b.z);
+    for(const pr of ptProj){
+      const t=Math.max(0,Math.min(1,(pr.z+30)/60));
+      const l=0.35+t*0.65;
+      hx.beginPath();hx.arc(pr.sx,pr.sy,1.0+t*1.5,0,Math.PI*2);
+      hx.fillStyle=`rgba(${Math.round(255*l)},${Math.round(30+40*l)},${Math.round(60+40*l)},${0.55+t*0.45})`;
+      hx.fill();
+    }
+  } else {
+    // Solid: use backface culling (skip nz<0 faces) — no sort needed, much faster
+    for(const [i0,i1,i2,type] of faces){
+      const r0={x:proj[i0].rx,y:proj[i0].ry,z:proj[i0].rz};
+      const r1={x:proj[i1].rx,y:proj[i1].ry,z:proj[i1].rz};
+      const r2={x:proj[i2].rx,y:proj[i2].ry,z:proj[i2].rz};
+      const e1=vecSub(r1,r0),e2=vecSub(r2,r0);
+      const n=norm(cross(e1,e2));
+      if(n.z < 0) continue; // backface cull — skip hidden faces
+      const diff=Math.max(0,dot(n,lightDir));
+      const rim=Math.max(0,dot(n,rimLight))*0.25;
+      const light=0.15+diff*0.75+rim;
+      const p0=proj[i0],p1=proj[i1],p2=proj[i2];
+      let r,g,b;
+      if(type==='front'){ r=Math.round(220+35*light); g=Math.round(30+40*light); b=Math.round(60+50*light); }
+      else if(type==='back'){ r=Math.round(160+60*light); g=Math.round(5+25*light); b=Math.round(20+30*light); }
+      else { r=Math.round(185+70*light); g=Math.round(10+35*light); b=Math.round(35+40*light); }
+      hx.beginPath();
+      hx.moveTo(p0.sx,p0.sy);hx.lineTo(p1.sx,p1.sy);hx.lineTo(p2.sx,p2.sy);hx.closePath();
+      hx.fillStyle=`rgba(${r},${g},${b},${s})`;
+      hx.fill();
+    }
+  }
+
+  // Specular
+  const hlx=cx-16+Math.sin(rotY)*22, hly=cy+floatY-34;
+  const hl=hx.createRadialGradient(hlx,hly,0,hlx,hly,24);
+  hl.addColorStop(0,`rgba(255,255,255,${0.3+s*0.55})`);
+  hl.addColorStop(0.5,`rgba(255,200,215,${0.08+s*0.18})`);
+  hl.addColorStop(1,'rgba(255,150,170,0)');
+  hx.fillStyle=hl;hx.beginPath();hx.arc(hlx,hly,24,0,Math.PI*2);hx.fill();
+
+  // Rim
+  const rx2=cx+22-Math.sin(rotY)*16, ry2=cy+floatY+10;
+  const rim=hx.createRadialGradient(rx2,ry2,0,rx2,ry2,18);
+  rim.addColorStop(0,`rgba(255,140,170,${s*0.4})`);rim.addColorStop(1,'rgba(255,80,120,0)');
+  hx.fillStyle=rim;hx.beginPath();hx.arc(rx2,ry2,18,0,Math.PI*2);hx.fill();
+
+  // Shadow
+  const sy2=cy+floatY+64;
+  const sh=hx.createRadialGradient(cx,sy2,0,cx,sy2,65);
+  sh.addColorStop(0,`rgba(150,5,35,${0.08+s*0.28})`);sh.addColorStop(1,'rgba(150,5,35,0)');
+  hx.fillStyle=sh;hx.beginPath();hx.ellipse(cx,sy2,65,16,0,0,Math.PI*2);hx.fill();
+
+  requestAnimationFrame(loopHeart);
+}
+
+// ── Events ───────────────────────────────────────────────
+window.addEventListener('touchstart',e=>{touchStartY=e.touches[0].clientY;},{passive:true});
+window.addEventListener('touchmove',e=>{
+  if(touchStartY===null)return;
+  const dy=touchStartY-e.touches[0].clientY;
+  swipeTarget=Math.max(0,Math.min(MAX_SWIPE,swipeTarget+dy*0.8));
+  touchStartY=e.touches[0].clientY;
+},{passive:true});
+window.addEventListener('touchend',()=>{touchStartY=null;});
+window.addEventListener('mousedown',e=>{if(e.button===0){isDragging=true;mouseStartY=e.clientY;}});
+window.addEventListener('mousemove',e=>{
+  cursor.style.left=e.clientX+'px';cursor.style.top=e.clientY+'px';
+  mouse.x=e.clientX;mouse.y=e.clientY;
+  if(isDragging&&mouseStartY!==null){
+    const dy=mouseStartY-e.clientY;
+    swipeTarget=Math.max(0,Math.min(MAX_SWIPE,swipeTarget+dy*0.8));
+    mouseStartY=e.clientY;
+  }
+});
+window.addEventListener('mouseup',()=>{isDragging=false;mouseStartY=null;});
+window.addEventListener('wheel',e=>{swipeTarget=Math.max(0,Math.min(MAX_SWIPE,swipeTarget+e.deltaY*0.6));},{passive:true});
+window.addEventListener('click',e=>{for(let i=0;i<60;i++)particles.push(new Particle(e.clientX,e.clientY));});
+window.addEventListener('resize',()=>{W=canvas.width=window.innerWidth;H=canvas.height=window.innerHeight;});
+setTimeout(()=>hint.style.opacity='0',5000);
+requestAnimationFrame(loopBg);
+requestAnimationFrame(loopHeart);
+</script>
+</body>
+</html>
